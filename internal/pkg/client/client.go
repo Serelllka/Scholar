@@ -1,9 +1,12 @@
 package client
 
-import "Scholar/internal/pkg/client/model"
+import (
+	"Scholar/internal/pkg/client/model"
+	"context"
+)
 
 type IWebClient interface {
-	SendMessage(msgType model.MessageType, payload []byte) error
+	SendMessage(ctx context.Context, msgType model.MessageType, payload []byte) error
 	GetId() string
-	StartReceiver()
+	StartReceiver(ctx context.Context)
 }

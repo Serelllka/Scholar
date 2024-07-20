@@ -3,6 +3,7 @@ package ws
 import (
 	"Scholar/internal/pkg/client"
 	"Scholar/internal/pkg/client/model"
+	"context"
 	"encoding/json"
 	"github.com/gorilla/websocket"
 	"sync"
@@ -30,7 +31,7 @@ func NewClient(hash string, conn *websocket.Conn, msgChan chan *model.Message) *
 	}
 }
 
-func (c *Client) SendMessage(msgType model.MessageType, payload []byte) error {
+func (c *Client) SendMessage(ctx context.Context, msgType model.MessageType, payload []byte) error {
 	c.mtx.Lock()
 	defer c.mtx.Unlock()
 
@@ -49,8 +50,10 @@ func (c *Client) SendMessage(msgType model.MessageType, payload []byte) error {
 }
 
 // StartReceiver can be started once
-func (c *Client) StartReceiver() {
-	c.recvStarter.Do(c.recvLoop)
+func (c *Client) StartReceiver(ctx context.Context) {
+	c.recvStarter.Do(func() {
+		c.recvLoop(ctx)
+	})
 }
 
 // GetId ...
@@ -58,22 +61,24 @@ func (c *Client) GetId() string {
 	return c.hash
 }
 
-func (c *Client) recvLoop() {
+func (c *Client) recvLoop(ctx context.Context) {
 	go func() {
+	loop:
 		for {
-			_, payload, err := c.conn.ReadMessage()
-			if err != nil {
-				break
-			}
-
-			go func() {
-				var msg model.Message
-				if gErr := json.Unmarshal(payload, &msg); gErr != nil {
-					c.msgChan <- nil
-				} else {
-					c.msgChan <- &msg
+			select {
+			case <-ctx.Done():
+				_ = c.conn.Close()
+				close(c.msgChan)
+			default:
+				_, payload, err := c.conn.ReadMessage()
+				if err != nil {
+					break loop
 				}
-			}()
+
+				msg := &model.Message{}
+				_ = json.Unmarshal(payload, &msg)
+				c.msgChan <- msg
+			}
 		}
 	}()
 }

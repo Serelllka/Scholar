@@ -4,6 +4,7 @@ import (
 	"Scholar/internal/pkg/client/model"
 	"context"
 	"encoding/json"
+	"fmt"
 	"github.com/brianvoe/gofakeit/v7"
 	"net/http"
 	"net/http/httptest"
@@ -49,8 +50,35 @@ func newReceiverFunc(t *testing.T, shouldReceive []model.Message, done chan stru
 	}
 }
 
+func newSendFunc(t *testing.T, shouldSend []model.Message, done chan struct{}) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		c, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer c.Close()
+
+		for _, expected := range shouldSend {
+			rawMsg, err := json.Marshal(expected)
+			assert.Nil(t, err)
+
+			err = c.WriteMessage(websocket.TextMessage, rawMsg)
+			assert.Nil(t, err)
+		}
+
+		close(done)
+	}
+}
+
 func newTestReceiverServer(t *testing.T, shouldReceive []model.Message, done chan struct{}) (*httptest.Server, func()) {
 	s := httptest.NewServer(newReceiverFunc(t, shouldReceive, done))
+	return s, func() {
+		s.Close()
+	}
+}
+
+func newTestSendServer(t *testing.T, shouldSend []model.Message, done chan struct{}) (*httptest.Server, func()) {
+	s := httptest.NewServer(newSendFunc(t, shouldSend, done))
 	return s, func() {
 		s.Close()
 	}
@@ -64,6 +92,8 @@ func newTestConn(testServerUrl string) *websocket.Conn {
 
 func Test_Writing_PositiveCase(t *testing.T) {
 	source := gofakeit.UUID()
+	ctx := context.Background()
+
 	messages := []model.Message{
 		{
 			MsgType: gofakeit.UUID(),
@@ -94,7 +124,7 @@ func Test_Writing_PositiveCase(t *testing.T) {
 	client := NewClient(source, conn, msgChan)
 
 	for _, msg := range messages {
-		err := client.SendMessage(model.MessageType(msg.MsgType), msg.Payload)
+		err := client.SendMessage(ctx, model.MessageType(msg.MsgType), msg.Payload)
 		assert.Nil(t, err, "error should be nil")
 	}
 
@@ -105,5 +135,44 @@ func Test_Writing_PositiveCase(t *testing.T) {
 	case <-ctx.Done():
 		t.Fail()
 	case <-done:
+	}
+}
+
+func Test_Reading_PositiveCase(t *testing.T) {
+	source := gofakeit.UUID()
+	ctx := context.Background()
+
+	messages := []model.Message{
+		{
+			MsgType: gofakeit.UUID(),
+			Source:  source,
+			Payload: []byte(gofakeit.UUID()),
+		},
+		{
+			MsgType: gofakeit.UUID(),
+			Source:  source,
+			Payload: []byte(gofakeit.UUID()),
+		},
+		{
+			MsgType: gofakeit.UUID(),
+			Source:  source,
+			Payload: []byte(gofakeit.UUID()),
+		},
+	}
+
+	done := make(chan struct{})
+	testServer, closer := newTestSendServer(t, messages, done)
+	defer closer()
+
+	conn := newTestConn(testServer.URL)
+	defer conn.Close()
+
+	msgChan := make(chan *model.Message)
+	client := NewClient(source, conn, msgChan)
+
+	client.StartReceiver(ctx)
+
+	for msg := range msgChan {
+		fmt.Println(msg.Payload)
 	}
 }
