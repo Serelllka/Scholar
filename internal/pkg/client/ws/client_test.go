@@ -140,7 +140,8 @@ func Test_Writing_PositiveCase(t *testing.T) {
 
 func Test_Reading_PositiveCase(t *testing.T) {
 	source := gofakeit.UUID()
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
 
 	messages := []model.Message{
 		{
@@ -172,7 +173,14 @@ func Test_Reading_PositiveCase(t *testing.T) {
 
 	client.StartReceiver(ctx)
 
+loop:
 	for msg := range msgChan {
-		fmt.Println(msg.Payload)
+		select {
+		case <-ctx.Done():
+			fmt.Println("ctx done")
+			break loop
+		default:
+			fmt.Println(msg.Payload)
+		}
 	}
 }
